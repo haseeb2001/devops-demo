@@ -1,49 +1,79 @@
 pipeline {
       agent any
+
       environment {
-            MY_CREDENTIALS = credentials('f995695c-89c3-4bdb-88ae-85bb71c0cc71') // Retrieve Jenkins credentials
+            AWS_REGION = 'eu-north-1'
+            ECR_REPOSITORY = 'myapp' // Set your Amazon ECR repository name
+            ECR_REGISTRY = '009356742988.dkr.ecr.eu-north-1.amazonaws.com'
       }
       stages {
-                  stage('testing') {
-                        steps {
+            stage('testing') {
+                  steps {
                         echo 'Hi, this is testing stage for credentials'
 
                         script {
                               sh "echo 'My credentials: ${env.MY_CREDENTIALS}'"
                         }
-                        }
                   }
+            }
             stage('One') {
                   steps {
                         echo 'Hi, this is Haseeb experimenting with Jenkins'
                   }
             }
-            stage('Two') {
+
+            stage('Checkout') {
                   steps {
-                        input('Do you want to proceed?')
+                        checkout scm
                   }
             }
-            stage('Three') {
-                  when {
-                        not {
-                              branch 'master'
-                        }
-                  }
+            stage('Get Git Info') {
                   steps {
-                        echo 'Hello'
+                        script {
+                              // Retrieve the branch name from Git
+                              BRANCH_TAG = sh(returnStdout: true, script: 'git rev-parse --abbrev-ref HEAD').trim()
+
+                              // Retrieve the commit SHA from Git
+                              IMAGE_TAG = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                              sh "echo 'IMAGE_TAG: ${IMAGE_TAG}, BRANCH_TAG: ${BRANCH_TAG}'"
+                        }
                   }
             }
-            stage('Four') {
-                  parallel {
-                        stage('Unit Test') {
-                              steps {
-                                    echo 'Running the unit test...'
-                              }
+            stage('Login to AWS') {
+                  steps {
+                        script {
+                              withCredentials([[
+                        $class: 'AmazonWebServicesCredentialsBinding',
+                        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY',
+                        credentialsId: 'aws-access-creds-1.1'
+                    ]]) {
+                                    sh """
+                        aws ecr get-login-password --region ${AWS_REGION} | docker login \
+                        --username AWS --password-stdin ${ECR_REGISTRY}
+                        """
+                    }
                         }
-                        stage('Integration test') {
-                              steps {
-                                    echo 'Running the integration test...'
-                              }
+                  }
+            }
+            stage('build and push to AWS') {
+                  steps {
+                        script {
+                              withCredentials([[
+                        $class: 'AmazonWebServicesCredentialsBinding',
+                        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY',
+                        credentialsId: 'aws-access-creds-1.1'
+                    ]]) {
+                                    // AWS CLI or SDK commands here
+                                    sh """
+                        docker build -t  ${ECR_REGISTRY}/${ECR_REPOSITORY}:${BRANCH_TAG}-${IMAGE_TAG} -t \
+                        ${ECR_REGISTRY}/${ECR_REPOSITORY}:${BRANCH_TAG}-latest .
+                        docker push  ${ECR_REGISTRY}/${ECR_REPOSITORY}:${BRANCH_TAG}-${IMAGE_TAG}
+                        docker push  ${ECR_REGISTRY}/${ECR_REPOSITORY}:${BRANCH_TAG}-latest
+                        echo 'image=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}' >> $GITHUB_OUTPUT
+                        """
+                    }
                         }
                   }
             }
